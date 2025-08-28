@@ -93,4 +93,44 @@ All trading and fee operations use normalized **u128** math:
 
 ---
 
+## 🏗️ Program Structs
+
+### 🧩 Global
+- Admin roles + protocol config
+- Treasury address for fee collection and dust sweeping
+
+### 🧩 StackInfo
+- Stack mint metadata, creator fee bps, optional rebalance hook
+
+### 🧩 Pool
+- All AMM state: paused flag, vaults, LP mint, oracle, fees, and creator balances
+
+### 🧩 GovernanceApproval
+- Optional stub for multisig governance
+
+---
+
+## 🧪 Testing & Diagnostics
+
+- Log all PDA derivations and bumps  
+- Ensure vault ATAs are owned by the `vault_authority` PDA  
+- Print transaction logs (`getParsedTransaction`) to trace events and `msg!()`  
+- Test edge cases:  
+  - Fee-on-transfer tokens  
+  - Mismatched decimals  
+  - Oracle slippage rejections  
+  - Reentrancy lock failures  
+
+---
+
+## ✅ Suggested Improvements / TODO
+
+- Refactor: Consolidate duplicate fee logic  
+- Tests: Add edge-case unit + fuzz tests  
+- Safety: Add admin limits for max slippage, dynamic fee caps  
+- Math: Migrate to fixed-point library (Q64, Q96-style) for better rounding
+
+---
+
+
 ---
