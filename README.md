@@ -42,4 +42,55 @@ It supports a special "Stack" token (whose mint authority is a PDA), split fee m
 - `claim_creator_fees`: Allows creators to withdraw their fees after timelock  
 - **Admin-only**: `emergency_pause`, `emergency_resume`, `withdraw_protocol_fees`, `set_pool_params`, `emergency_withdraw`
 
+  ## 🧾 PDA Derivation
+
+Seed patterns for deterministic PDA generation:
+
+- `Global`: `["global"]`  
+- `StackInfo`: `["stack_info", stack_mint]`  
+- `StackMintAuth`: `["stack_mint_auth", stack_mint]`  
+- `Pool`: `["pool", stack_mint, quote_mint]`  
+- `VaultAuthority`: `["vault_authority", pool]`
+
+---
+
+## 🧮 Math & Helper Logic
+
+All trading and fee operations use normalized **u128** math:
+
+- `normalize_amount_u128`: Converts u64 native token → normalized u128  
+- `denormalize_amount_u64`: Converts normalized u128 → native token u64 (floor)  
+- `get_amount_out`: Standard constant-product formula  
+- `integer_sqrt`: Used for initial LP token minting  
+
+> ⚠️ Uses `checked_*` ops for overflow-safe math (returns `MathOverflow` error if invalid)
+
+---
+
+## 🛡️ Security & Safety Measures
+
+- 🔒 **Reentrancy Lock**: Prevents nested state changes  
+- ⏸️ **Pause Mechanism**: Global & per-pool pausing  
+- 👮‍♂️ **PDA Ownership**: Vaults must be owned by vault_authority PDA  
+- 🧮 **Oracle Check**: Enforces deviation bounds via `max_price_deviation_bps`  
+- 💨 **Dust Sweeps**: Residual tokens below threshold routed to treasury  
+- ⏳ **Timelocked Creator Fees**: Ensures fair claim delays  
+- 🔑 **Role Access**: Admin, pauser, fee manager, governance controlled
+
+---
+
+## ❗ Error Codes
+
+| Error Code              | Description & Fix |
+|-------------------------|-------------------|
+| `InvalidVaultOwner`     | Vault account not owned by PDA. Recreate ATA using correct PDA. |
+| `InvalidVaultMint`      | Vault mint mismatch. Double-check the mint assigned to the vault. |
+| `InvalidMintAuthority`  | PDA mismatch on stack mint. Confirm derivation order & seeds. |
+| `MathOverflow`          | Decimal conversion or swap overflow. Review inputs and scaling. |
+| `NoLiquidity`           | Swap/remove attempted on empty pool. Provide initial liquidity. |
+| `Reentrancy`            | Nested operation blocked by lock. Avoid nested txs. |
+| `OraclePriceMismatch`   | Price feed off by too much. Re-check oracle scaling & tolerance. |
+
+---
+
 ---
