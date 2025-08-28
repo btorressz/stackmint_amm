@@ -19,14 +19,17 @@ It supports a special "Stack" token (whose mint authority is a PDA), split fee m
 
 ---
 
-## ⚙️ Important Constants
+## ⚙️ Important Constants (Updated)
 
-| Constant                     | Description                                                                 |
-|-----------------------------|-----------------------------------------------------------------------------|
-| `BPS_DENOM = 10_000`        | Basis points denominator (1 bps = 1/10,000)                                 |
-| `INTERNAL_PRECISION_DECIMALS = 9` | Normalization base for internal u128 arithmetic                    |
-| `DUST_THRESHOLD = 10`       | Token units ≤ this threshold get swept to treasury                         |
-| `CREATOR_CLAIM_LOCK_SECS`   | 7-day timelock before creators can claim accrued fees                      |
+| Constant                             | Description                                                                 |
+|--------------------------------------|-----------------------------------------------------------------------------|
+| `BPS_DENOM = 10_000`                 | Basis points denominator (1 bps = 1/10,000)                                 |
+| `INTERNAL_PRECISION_DECIMALS = 9`    | Normalization base for internal `u128` arithmetic                          |
+| `FALLBACK_DUST_THRESHOLD = 10`       | Tiny balances ≤ this (native units) are swept to treasury if unset in global |
+| `FALLBACK_CREATOR_CLAIM_LOCK_SECS`   | 7-day fallback timelock if `global.creator_claim_lock_secs == 0`           |
+| `FALLBACK_MAX_FEE_BPS = 2000`        | Max fee cap (20%) if `global.max_fee_bps` not set                          |
+
+> 📝 `CREATOR_CLAIM_LOCK_SECS` constant was removed. The value is now dynamically read from `global.creator_claim_lock_secs`, with fallback.
 
 ---
 
