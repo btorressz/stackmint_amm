@@ -136,7 +136,7 @@ All trading and fee operations use normalized **u128** math:
 
 ---
 
-## ✅ Suggested Improvements / TODO
+## ✅ Suggested Improvements / TODO[COMPLETED]
 
 - Refactor: Consolidate duplicate fee logic  
 - Tests: Add edge-case unit + fuzz tests  
