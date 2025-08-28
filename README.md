@@ -57,6 +57,16 @@ Seed patterns for deterministic PDA generation:
 
 ---
 
+## 🔁 CPI & Lifetime Fixes (What Changed & Why)
+
+### Problem  
+Using mixed borrows like `&Program<Token>` or `&UncheckedAccount<'a>` with `&Account<'b, TokenAccount>` in CPI contexts caused **Rust lifetime/invariance errors** (`'1 must outlive '2`).
+
+### Fix  
+Token CPI helpers now accept **owned** `AccountInfo`, such as:
+
+---
+
 ## 🧮 Math & Helper Logic
 
 All trading and fee operations use normalized **u128** math:
