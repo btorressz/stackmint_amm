@@ -1,5 +1,5 @@
 // tests/stackmint_amm.diagnostics.test.ts(anchor.test.ts in solana playground)
-//edit tests 
+//not all tests are passing still reviewing 
 import assert from "assert";
 import * as anchor from "@project-serum/anchor";
 import {
@@ -9,7 +9,6 @@ import {
   SYSVAR_RENT_PUBKEY,
   PublicKey,
   LAMPORTS_PER_SOL,
-  sendAndConfirmTransaction,
   Connection,
 } from "@solana/web3.js";
 import * as splToken from "@solana/spl-token";
@@ -138,18 +137,8 @@ describe("stackmint_amm diagnostics test", () => {
     const progId: PublicKey = (program as any).programId ?? PROGRAM_ID;
     console.log("Resolved program id (progId):", progId.toBase58());
 
-    // create a local payer for utility operations (ATA creation / mints)
-    const payer = Keypair.generate();
-    console.log("Local helper payer:", payer.publicKey.toBase58());
-
-    try {
-      const sig = await connection.requestAirdrop(payer.publicKey, LAMPORTS_PER_SOL);
-      await connection.confirmTransaction(sig, "confirmed");
-      console.log("Airdropped to helper payer:", sig);
-    } catch (e) {
-      console.warn("Airdrop to helper payer failed or not needed in this environment:", e);
-    }
-
+    // NOTE: we will use the Anchor provider wallet as the transaction fee payer & signer for mint operations,
+    // to avoid failures when an airdrop to a helper Keypair cannot be performed.
     const adminPubkey: PublicKey = provider.wallet.publicKey;
     console.log("Resolved admin/test wallet pubkey:", adminPubkey.toBase58());
     console.log("Program ID:", progId.toBase58());
@@ -158,6 +147,8 @@ describe("stackmint_amm diagnostics test", () => {
     const TOKEN_PROGRAM_ID = (splToken as any).TOKEN_PROGRAM_ID ?? (splToken as any).TOKEN_PROGRAM_ID;
     const ASSOCIATED_TOKEN_PROGRAM_ID =
       (splToken as any).ASSOCIATED_TOKEN_PROGRAM_ID ?? (splToken as any).ASSOCIATED_TOKEN_PROGRAM_ID;
+    const MINT_SIZE = (splToken as any).MINT_SIZE ?? 82;
+    const ACCOUNT_SIZE = (splToken as any).ACCOUNT_SIZE ?? 165;
 
     async function printTxLogs(sig: string | null | undefined) {
       if (!sig) {
@@ -184,28 +175,92 @@ describe("stackmint_amm diagnostics test", () => {
       console.log(`OK: ${label} exists: ${pubkey.toBase58()}`);
     }
 
-    // spl-token helpers (use any to avoid version typing issues)
-    async function createMint(decimals: number, mintAuthority: PublicKey): Promise<PublicKey> {
-      // many spl-token versions have different signatures; we use the compatibility wrapper in `any`
-      const mint = await (splToken as any).createMint(connection, payer, mintAuthority, null, decimals);
-      console.log(`Created mint ${mint.toBase58()} decimals=${decimals} authority=${mintAuthority.toBase58()}`);
-      return mint;
+    // Use provider to send & confirm txs (so provider.wallet signs & pays fees).
+    // AnchorProvider typically exposes `sendAndConfirm` — access it dynamically to avoid typing errors.
+    async function providerSendAndConfirm(tx: Transaction, signers: Keypair[] = []) {
+      const sendFn = (provider as any).sendAndConfirm ?? (provider as any).send;
+      if (!sendFn) {
+        // fallback: sign with provided signers and send via connection (may fail if wallet signing required)
+        if (signers.length > 0) {
+          const rawTx = await provider.wallet.signTransaction?.(tx) ?? tx;
+          rawTx.partialSign(...signers);
+          const s = await connection.sendRawTransaction(await rawTx.serialize(), { skipPreflight: false, preflightCommitment: "confirmed" });
+          await connection.confirmTransaction(s, "confirmed");
+          return s;
+        } else {
+          const rawTx = tx;
+          const signed = await provider.wallet.signTransaction?.(rawTx);
+          const s = await connection.sendRawTransaction(await signed.serialize(), { skipPreflight: false, preflightCommitment: "confirmed" });
+          await connection.confirmTransaction(s, "confirmed");
+          return s;
+        }
+      }
+      // send via provider (preferred)
+      return await sendFn.call(provider, tx, signers);
     }
 
+    // create mint with provider as fee-payer and adminPubkey as mint authority
+    async function createMintDecimals(decimals: number, mintAuthority: PublicKey): Promise<PublicKey> {
+      const mintKeypair = Keypair.generate();
+      const mintPubkey = mintKeypair.publicKey;
+      const lamports = await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+      const tx = new Transaction();
+      tx.add(
+        SystemProgram.createAccount({
+          fromPubkey: adminPubkey,
+          newAccountPubkey: mintPubkey,
+          space: MINT_SIZE,
+          lamports,
+          programId: TOKEN_PROGRAM_ID,
+        }),
+        (splToken as any).createInitializeMintInstruction
+          ? (splToken as any).createInitializeMintInstruction(mintPubkey, decimals, mintAuthority, null, TOKEN_PROGRAM_ID)
+          : (splToken as any).createInitMintInstruction(mintPubkey, decimals, mintAuthority, null)
+      );
+      const sig = await providerSendAndConfirm(tx, [mintKeypair]);
+      console.log(`Created mint ${mintPubkey.toBase58()} decimals=${decimals} authority=${mintAuthority.toBase58()} sig=${sig}`);
+      await printTxLogs(sig);
+      return mintPubkey;
+    }
+
+    // create token account (non-ATA) and initialize it, owned by `owner`
+    async function createTokenAccountOwnedBy(mint: PublicKey, owner: PublicKey, label: string): Promise<PublicKey> {
+      const tokenAccount = Keypair.generate();
+      const tokenAcctPub = tokenAccount.publicKey;
+      const rentLamports = await connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE);
+      const tx = new Transaction();
+      tx.add(
+        SystemProgram.createAccount({
+          fromPubkey: adminPubkey,
+          newAccountPubkey: tokenAcctPub,
+          space: ACCOUNT_SIZE,
+          lamports: rentLamports,
+          programId: TOKEN_PROGRAM_ID,
+        }),
+        (splToken as any).createInitializeAccountInstruction
+          ? (splToken as any).createInitializeAccountInstruction(tokenAcctPub, mint, owner, TOKEN_PROGRAM_ID)
+          : (splToken as any).createInitAccountInstruction(tokenAcctPub, mint, owner)
+      );
+      const sig = await providerSendAndConfirm(tx, [tokenAccount]);
+      console.log(`Created token acct (${label}): ${tokenAcctPub.toBase58()} owner=${owner.toBase58()} sig=${sig}`);
+      await printTxLogs(sig);
+      return tokenAcctPub;
+    }
+
+    // get or create ATA but create with provider as fee payer and signer
     async function getOrCreateAtaAndLog(owner: PublicKey, mint: PublicKey, label: string): Promise<PublicKey> {
-      const ata = await (splToken as any).getAssociatedTokenAddress(mint, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+      const ata = await (splToken as any).getAssociatedTokenAddress?.(mint, owner, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
+        ?? (await (splToken as any).getAssociatedTokenAddressSync?.(mint, owner));
       const info = await connection.getAccountInfo(ata);
       if (!info) {
-        const ix = (splToken as any).createAssociatedTokenAccountInstruction(
-          payer.publicKey,
-          ata,
-          owner,
-          mint,
-          TOKEN_PROGRAM_ID,
-          ASSOCIATED_TOKEN_PROGRAM_ID
-        );
+        const ix = (splToken as any).createAssociatedTokenAccountInstruction
+          ? (splToken as any).createAssociatedTokenAccountInstruction(adminPubkey, ata, owner, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
+          : (splToken as any).createAssocTokenAccountInstruction
+            ? (splToken as any).createAssocTokenAccountInstruction(adminPubkey, ata, owner, mint)
+            : null;
+        if (!ix) throw new Error("Unable to construct ATA create instruction for this spl-token version.");
         const tx = new Transaction().add(ix);
-        const sig = await sendAndConfirmTransaction(connection, tx, [payer]);
+        const sig = await providerSendAndConfirm(tx, []);
         console.log(`Created ATA ${label}: ${ata.toBase58()} sig=${sig}`);
         await printTxLogs(sig);
       } else {
@@ -214,55 +269,31 @@ describe("stackmint_amm diagnostics test", () => {
       return ata;
     }
 
-    async function createTokenAccountOwnedBy(mint: PublicKey, owner: PublicKey, label: string): Promise<PublicKey> {
-      const tokenAccount = Keypair.generate();
-      const rentLamports = await connection.getMinimumBalanceForRentExemption((splToken as any).ACCOUNT_SIZE);
-      const tx = new Transaction().add(
-        SystemProgram.createAccount({
-          fromPubkey: payer.publicKey,
-          newAccountPubkey: tokenAccount.publicKey,
-          space: (splToken as any).ACCOUNT_SIZE,
-          lamports: rentLamports,
-          programId: TOKEN_PROGRAM_ID,
-        }),
-        (splToken as any).createInitializeAccountInstruction(tokenAccount.publicKey, mint, owner, TOKEN_PROGRAM_ID)
-      );
-      const sig = await sendAndConfirmTransaction(connection, tx, [payer, tokenAccount]);
-      console.log(`Created token acct (${label}): ${tokenAccount.publicKey.toBase58()} owner=${owner.toBase58()} sig=${sig}`);
+    // mintTo performed by provider.wallet (which must be the mint authority)
+    async function mintTokensTo(mint: PublicKey, destination: PublicKey, amount: number, mintAuthorityPubkey: PublicKey) {
+      // build mintTo instruction (amount is u64 numeric; create instruction from spl-token)
+      const ix = (splToken as any).createMintToInstruction
+        ? (splToken as any).createMintToInstruction(mint, destination, mintAuthorityPubkey, BigInt(amount), [], TOKEN_PROGRAM_ID)
+        : (splToken as any).createMintToCheckedInstruction
+          ? (splToken as any).createMintToCheckedInstruction(mint, destination, mintAuthorityPubkey, amount, undefined, TOKEN_PROGRAM_ID)
+          : null;
+      if (!ix) throw new Error("Unable to construct mintTo instruction for this spl-token version.");
+      const tx = new Transaction().add(ix);
+      // provider will sign with wallet (mintAuthority must be provider wallet)
+      const sig = await providerSendAndConfirm(tx, []);
+      console.log(`Minted ${amount} to ${destination.toBase58()} for mint ${mint.toBase58()} sig=${sig}`);
       await printTxLogs(sig);
-      return tokenAccount.publicKey;
-    }
-
-    async function mintTokensTo(mint: PublicKey, destination: PublicKey, amount: number, authoritySigner: Keypair) {
-      // Use any-cast to handle different spl-token versions; pass BigInt for amount if required
-      const mintToFn = (splToken as any).mintTo ?? (splToken as any).mintToChecked ?? null;
-      if (!mintToFn) throw new Error("spl-token mintTo function not found in this version of spl-token shim.");
-      // try a few signature patterns
-      try {
-        // pattern: mintTo(connection, payer, mint, destination, authority, amount)
-        const sig = await mintToFn(connection, authoritySigner, mint, destination, authoritySigner, BigInt(amount));
-        console.log(`Minted ${amount} to ${destination.toBase58()} for mint ${mint.toBase58()} sig=${sig}`);
-        await printTxLogs(sig);
-        return sig;
-      } catch (e1) {
-        try {
-          // alternative pattern: mintTo(connection, mint, destination, authority, [], amount)
-          const sig = await (splToken as any).mintTo(connection, authoritySigner, mint, destination, authoritySigner.publicKey, [], BigInt(amount));
-          console.log(`Minted ${amount} (alt) to ${destination.toBase58()} for mint ${mint.toBase58()} sig=${sig}`);
-          await printTxLogs(sig);
-          return sig;
-        } catch (e2) {
-          throw new Error("mintTo attempts failed: " + String(e2));
-        }
-      }
+      return sig;
     }
 
     // ---------- Begin scenario ----------
     console.log("\n=== Step 1: Create stack & quote mints ===");
     const stackDecimals = 6;
     const quoteDecimals = 6;
-    const stackMint = await createMint(stackDecimals, payer.publicKey);
-    const quoteMint = await createMint(quoteDecimals, payer.publicKey);
+
+    // Create mints with adminPubkey as mint authority so the provider wallet can mint later
+    const stackMint = await createMintDecimals(stackDecimals, adminPubkey);
+    const quoteMint = await createMintDecimals(quoteDecimals, adminPubkey);
 
     // PDAs - use `progId` instead of program.programId to avoid unknown property error
     const [globalPda, globalBump] = await PublicKey.findProgramAddress([Buffer.from("global")], progId);
@@ -292,7 +323,7 @@ describe("stackmint_amm diagnostics test", () => {
     );
     console.log("VaultAuth PDA:", vaultAuthPda.toBase58(), "bump:", vaultAuthBump);
 
-    // Treasury ATA
+    // Treasury ATA (use adminPubkey as payer for ATA creation)
     console.log("\n=== Step 2: Create treasury ATA (quote mint) ===");
     const treasuryAta = await getOrCreateAtaAndLog(adminPubkey, quoteMint, "treasury (quote)");
     await ensureExists(treasuryAta, "treasury ATA");
@@ -305,8 +336,13 @@ describe("stackmint_amm diagnostics test", () => {
       const feeManager = adminPubkey;
       const governance = adminPubkey;
 
+      // NEW args required by updated lib.rs:
+      const maxFeeBps = 2000;
+      const dustThreshold = 10;
+      const creatorClaimLockSecs = 60 * 60 * 24 * 7;
+
       const txSig = await program.methods
-        .initGlobal(protocolFeeBps, pauser, feeManager, governance)
+        .initGlobal(protocolFeeBps, pauser, feeManager, governance, maxFeeBps, dustThreshold, creatorClaimLockSecs)
         .accounts({
           global: globalPda,
           admin: adminPubkey,
@@ -366,7 +402,7 @@ describe("stackmint_amm diagnostics test", () => {
     console.log("\n=== Step 5: create LP mint (authority = vault PDA) ===");
     let lpMint: PublicKey;
     try {
-      lpMint = await createMint(9, vaultAuthPda);
+      lpMint = await createMintDecimals(9, vaultAuthPda);
       await ensureExists(lpMint, "lp mint");
     } catch (err) {
       console.error("lp mint creation failed:", err);
@@ -456,8 +492,9 @@ describe("stackmint_amm diagnostics test", () => {
     const userStackAta = await getOrCreateAtaAndLog(adminPubkey, stackMint, "user_stack");
     const userQuoteAta = await getOrCreateAtaAndLog(adminPubkey, quoteMint, "user_quote");
 
-    await mintTokensTo(stackMint, userStackAta, 1_000_000, payer);
-    await mintTokensTo(quoteMint, userQuoteAta, 2_000_000, payer);
+    // mint tokens to user ATAs (adminPubkey is mint authority)
+    await mintTokensTo(stackMint, userStackAta, 1_000_000, adminPubkey);
+    await mintTokensTo(quoteMint, userQuoteAta, 2_000_000, adminPubkey);
 
     // Step 9: provide_liquidity
     console.log("\n=== Step 9: provide_liquidity ===");
@@ -598,6 +635,8 @@ describe("stackmint_amm diagnostics test", () => {
             creatorReceiver: creatorReceiver,
             vaultAuthority: vaultAuthPda,
             tokenProgram: TOKEN_PROGRAM_ID,
+            // NEW: ClaimCreatorFees context requires global
+            global: globalPda,
           })
           .rpc();
         console.log("claim_creator_fees tx:", txSig);
@@ -632,3 +671,4 @@ describe("stackmint_amm diagnostics test", () => {
     console.log("Diagnostics test finished.");
   });
 });
+
