@@ -14,7 +14,7 @@
 - **Liquidity Provision & Removal** with canonical LP tokens
 - **Fee Routing**: Protocol, creator, and pool fees
 - **Governance-Secured Actions**: Optional off-chain multisig approvals for sensitive operations
-- **Oracle Price Checks**: Slippage and price protection via oracles (e.g., Pyth)
+- **Oracle Price Checks**: Slippage and price protection via oracles (e.g., Pyth could be added in production or v3 PoC)
 - **Configurable Dust Thresholds**: Automatic sweeping of small balances to treasury
 - **Emergency Pause & Withdrawals**: Admin/pauser controls for system safety
 - **Permissioned Creator Rewards**: Claimable after a configurable time lock
