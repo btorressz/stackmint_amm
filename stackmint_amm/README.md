@@ -4,7 +4,7 @@
 
 **StackMint AMM** is a Solana program built with [Anchor](https://book.anchor-lang.com/) that provides a robust Automated Market Maker (AMM) for token pairs, supporting advanced features such as customizable fees, creator rewards, dust sweeping, and governance hooks. The protocol is highly configurable for both protocol administrators and pool creators, with safety and flexibility top of mind.
 
-**NOTE*** this project is a proof of concept/prototype that was developed in Solana Playground IDE
+**NOTE** this project is a proof of concept/prototype that was developed in Solana Playground IDE
 
 ---
 
