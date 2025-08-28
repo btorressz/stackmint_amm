@@ -1,5 +1,5 @@
 // client.ts — Playground client for stackmint_amm
-// Define runClient(pg) with no exports and no use of banned globals.
+// Ready-to-run in-browser Playground client. Attach function to `pg` if available.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as anchor from "@project-serum/anchor";
@@ -14,21 +14,23 @@ import {
 } from "@solana/web3.js";
 import * as splToken from "@solana/spl-token";
 
+/* === CONFIG === */
 const PROGRAM_ID = new PublicKey("7zcYfbAQNpGXpkfn5tXh7zMhJzm5UkQJeLbv2871cjVt");
-
 const CREATE_NEW_MINTS = true;
 const STACK_DECIMALS = 6;
 const QUOTE_DECIMALS = 6;
 
+/* === main function === */
 async function runClient(pg: any): Promise<void> {
   if (!pg || !pg.connection || !pg.wallet) {
-    throw new Error("Playground `pg` object missing. Run inside Solana Playground.");
+    throw new Error("Playground `pg` object missing or invalid. Run inside Playground and pass `pg`.");
   }
 
   const connection: Connection = pg.connection as Connection;
 
+  // Anchor provider compatibility
   const AnchorProviderCtor: any = (anchor as any).AnchorProvider ?? (anchor as any).Provider;
-  if (!AnchorProviderCtor) throw new Error("Cannot find Anchor Provider/Provider.");
+  if (!AnchorProviderCtor) throw new Error("Anchor Provider/Provider not found in anchor import.");
 
   const defaultOptions =
     typeof AnchorProviderCtor.defaultOptions === "function" ? AnchorProviderCtor.defaultOptions() : {};
@@ -46,6 +48,7 @@ async function runClient(pg: any): Promise<void> {
     console.warn("Could not fetch balance:", err);
   }
 
+  // Resolve program: pg.program -> on-chain IDL -> anchor.workspace
   let program: any | undefined;
 
   try {
@@ -53,9 +56,9 @@ async function runClient(pg: any): Promise<void> {
     if (maybeProg && maybeProg.programId && typeof maybeProg.programId.equals === "function") {
       if (maybeProg.programId.equals(PROGRAM_ID)) {
         program = maybeProg;
-        console.log("Using program from Playground.");
+        console.log("Using program from Playground (pg.program).");
       } else {
-        console.warn("Playground program present but id differs.");
+        console.warn("Playground program present but programId differs.");
       }
     }
   } catch {
@@ -67,12 +70,12 @@ async function runClient(pg: any): Promise<void> {
       const idl = await (anchor as any).Program.fetchIdl(PROGRAM_ID, provider);
       if (idl) {
         program = new (anchor as any).Program(idl, PROGRAM_ID, provider);
-        console.log("Program built from on-chain IDL.");
+        console.log("Constructed program from on-chain IDL.");
       } else {
-        console.warn("No IDL on-chain for PROGRAM_ID.");
+        console.warn("No on-chain IDL found for PROGRAM_ID.");
       }
     } catch (err) {
-      console.warn("Failed fetchIdl:", err);
+      console.warn("fetchIdl failed:", err);
     }
   }
 
@@ -84,7 +87,7 @@ async function runClient(pg: any): Promise<void> {
           if ((p as any).programId && typeof (p as any).programId.equals === "function") {
             if ((p as any).programId.equals(PROGRAM_ID)) {
               program = p;
-              console.log("Found program in workspace.");
+              console.log("Found program in anchor.workspace.");
               break;
             }
           }
@@ -98,9 +101,10 @@ async function runClient(pg: any): Promise<void> {
   }
 
   if (!program) {
-    throw new Error("Unable to resolve program. Provide IDL or expose pg.program.");
+    throw new Error("Unable to resolve Anchor program. Provide an IDL or expose pg.program.");
   }
 
+  // Helper: print logs from a tx sig
   async function printLogs(sig: string | null | undefined) {
     if (!sig) return;
     try {
@@ -109,23 +113,26 @@ async function runClient(pg: any): Promise<void> {
       (tx?.meta?.logMessages ?? []).forEach((l: string) => console.log("   ", l));
       console.log("=== end logs ===");
     } catch (e) {
-      console.warn("Error fetching logs:", e);
+      console.warn("Error fetching tx logs:", e);
     }
   }
 
+  // Helper: ensure airdrop for ephemeral payer
   async function ensureAirdrop(kp: Keypair, sol = 1) {
     try {
       const sig = await connection.requestAirdrop(kp.publicKey, sol * LAMPORTS_PER_SOL);
       await connection.confirmTransaction(sig, "confirmed");
-      console.log("Airdrop to helper:", kp.publicKey.toBase58(), "sig:", sig);
+      console.log("Airdropped helper:", kp.publicKey.toBase58(), "sig:", sig);
     } catch (e) {
-      console.warn("Airdrop not needed or failed:", e);
+      console.warn("Airdrop failed or not available:", e);
     }
   }
 
+  // Helper: create mint with compatibility across spl-token versions
   async function createMintHelper(decimals: number, mintAuth: PublicKey): Promise<PublicKey> {
     const payer = Keypair.generate();
     await ensureAirdrop(payer, 1);
+
     try {
       if (typeof (splToken as any).createMint === "function") {
         const mint = await (splToken as any).createMint(connection, payer, mintAuth, null, decimals);
@@ -143,7 +150,7 @@ async function runClient(pg: any): Promise<void> {
         console.log(`Created mint (legacy) ${token.publicKey.toBase58()}`);
         return token.publicKey;
       } else {
-        throw new Error("No createMint API in @solana/spl-token.");
+        throw new Error("No compatible createMint API found in @solana/spl-token.");
       }
     } catch (err) {
       console.error("createMintHelper failed:", err);
@@ -151,6 +158,7 @@ async function runClient(pg: any): Promise<void> {
     }
   }
 
+  // Helper: get or create ATA (handles modern and legacy API shapes)
   async function getOrCreateAta(owner: PublicKey, mint: PublicKey): Promise<PublicKey> {
     const TOKEN_PROGRAM_ID = (splToken as any).TOKEN_PROGRAM_ID ?? splToken.TOKEN_PROGRAM_ID;
     const ASSOCIATED_TOKEN_PROGRAM_ID =
@@ -237,25 +245,31 @@ async function runClient(pg: any): Promise<void> {
     } else {
       console.log(`ATA exists: ${ata.toBase58()}`);
     }
+
     return ata;
   }
 
+  // Derive a global PDA used by the program
   const [globalPda] = await PublicKey.findProgramAddress([Buffer.from("global")], PROGRAM_ID);
   console.log("Global PDA:", globalPda.toBase58());
 
+  // Mints
   let stackMint: PublicKey;
   let quoteMint: PublicKey;
+
   if (CREATE_NEW_MINTS) {
-    console.log("Creating mints.");
+    console.log("Creating new stack & quote mints.");
     const mintAuth = provider.wallet.publicKey;
     stackMint = await createMintHelper(STACK_DECIMALS, mintAuth);
     quoteMint = await createMintHelper(QUOTE_DECIMALS, mintAuth);
   } else {
-    throw new Error("CREATE_NEW_MINTS=false but no existing mint addresses provided.");
+    throw new Error("CREATE_NEW_MINTS=false but no mint addresses provided.");
   }
 
+  // Treasury ATA
   const treasuryAta = await getOrCreateAta(provider.wallet.publicKey, quoteMint);
 
+  // init_global params
   const protocolFeeBps = 50;
   const pauser = provider.wallet.publicKey;
   const feeManager = provider.wallet.publicKey;
@@ -309,12 +323,24 @@ async function runClient(pg: any): Promise<void> {
       console.log("init_global tx (rpc):", sig);
       await printLogs(sig);
     } else {
-      throw new Error("Program does not expose expected entry for init_global.");
+      throw new Error("Program does not expose expected entrypoint for init_global.");
     }
   } catch (err) {
     console.error("init_global failed:", err);
     throw err;
   }
 
-  console.log("Setup complete. Now you can run registration, pool create, and liquidity actions.");
+  console.log("Setup complete. You can now register stacks, create pools, and add liquidity.");
 }
+
+/* === Attach runClient to pg when available for easy console invocation === */
+try {
+  if (typeof pg !== "undefined" && pg && typeof pg === "object") {
+    (pg as any).runClient = runClient;
+    // friendly hint (this log appears as the file loads)
+    console.log("runClient() registered on pg. Call: await pg.runClient(pg)");
+  }
+} catch {
+  // ignore registration errors
+}
+
