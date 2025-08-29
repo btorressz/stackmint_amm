@@ -344,3 +344,12 @@ try {
   // ignore registration errors
 }
 
+
+/* //OUTPUT 
+
+Running client...
+  client.ts:
+    runClient() registered on pg. Call: await pg.runClient(pg)
+
+    */
+
